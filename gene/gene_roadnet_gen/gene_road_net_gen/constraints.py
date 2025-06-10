@@ -34,6 +34,10 @@ def calculate_fitness(network):
     total_fitness += WEIGHTS['reverse_count'] * reverse_count
     total_fitness += WEIGHTS['reverse_length'] * reverse_length
     
+    # 7. 转向点有效性惩罚
+    turn_point_penalty = calculate_turn_point_validity(network)
+    total_fitness += WEIGHTS.get('turn_validity', 5.0) * turn_point_penalty
+    
     return total_fitness
 
 def calculate_crossings(segments):
@@ -117,3 +121,53 @@ def calculate_reverse_metrics(segments):
     reverse_length = max(0, reverse_length - MAX_REVERSE_LENGTH * len(segments))
     
     return reverse_count, reverse_length
+
+def calculate_turn_point_validity(network):
+    """
+    计算转向点有效性惩罚
+    检查转向点是否在边界内，是否与其他路径过近等
+    """
+    penalty = 0
+    poly = Polygon(BOUNDARY)
+    
+    # 提取转向点位置
+    turn_points = []
+    
+    # 从基因中计算每个转向点的位置
+    for waypoint_idx, waypoint in enumerate(WAYPOINTS):
+        gene_start = waypoint_idx * 6
+        
+        # 获取转向参数
+        turn_distance = network.genes[gene_start + 2]
+        turn_angle = network.genes[gene_start + 3]
+        
+        # 计算转向点位置
+        waypoint_pos = (waypoint[0], waypoint[1])
+        waypoint_heading = waypoint[2]
+        backing_angle = waypoint_heading + turn_angle
+        
+        turn_x = waypoint_pos[0] - turn_distance * np.cos(backing_angle)
+        turn_y = waypoint_pos[1] - turn_distance * np.sin(backing_angle)
+        turn_point = Point(turn_x, turn_y)
+        turn_points.append(turn_point)
+        
+        # 1. 检查转向点是否在边界内
+        if not poly.contains(turn_point):
+            # 计算距离边界的距离作为惩罚
+            distance_to_boundary = turn_point.distance(poly.exterior)
+            penalty += distance_to_boundary * 10
+        
+        # 2. 检查转向点是否距离边界过近（需要操作空间）
+        min_clearance = 0.3  # 最小间隙
+        if turn_point.distance(poly.exterior) < min_clearance:
+            penalty += (min_clearance - turn_point.distance(poly.exterior)) * 5
+    
+    # 3. 检查转向点之间的距离（避免冲突）
+    min_turn_separation = 1.0  # 转向点间最小距离
+    for i in range(len(turn_points)):
+        for j in range(i + 1, len(turn_points)):
+            distance = turn_points[i].distance(turn_points[j])
+            if distance < min_turn_separation:
+                penalty += (min_turn_separation - distance) * 8
+    
+    return penalty

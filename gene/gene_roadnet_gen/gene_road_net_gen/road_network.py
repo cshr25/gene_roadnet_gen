@@ -50,48 +50,74 @@ class RoadNetwork:
         self.path_segments = self.generate_paths()
     
     def generate_random_genes(self):
-        """生成随机基因序列"""
+        """
+        生成随机基因序列
+        新基因结构：每个途径点有4个参数
+        [ctrl1_x, ctrl1_y, turn_distance, turn_angle, ctrl2_x, ctrl2_y, ...]
+        """
         genes = []
-        # 每个途径点有两个控制点
+        # 每个途径点有4个基因参数
         for _ in range(len(WAYPOINTS)):
-            # 控制点1 (起点附近)
-            x = random.uniform(START_POINT[0], START_POINT[0] + 3)
-            y = random.uniform(START_POINT[1], START_POINT[1] + 3)
-            genes.append((x, y))
+            # 控制点1 (起点附近) - 用于到达途径点的前进路径
+            x1 = random.uniform(START_POINT[0], START_POINT[0] + 3)
+            y1 = random.uniform(START_POINT[1], START_POINT[1] + 3)
+            genes.extend([x1, y1])
             
-            # 控制点2 (终点附近)
-            x = random.uniform(END_POINT[0] - 3, END_POINT[0])
-            y = random.uniform(END_POINT[1] - 3, END_POINT[1])
-            genes.append((x, y))
+            # 转向点参数 - 用于倒车操作
+            turn_distance = random.uniform(TURN_DISTANCE_MIN, TURN_DISTANCE_MAX)
+            turn_angle = random.uniform(-TURN_ANGLE_MAX, TURN_ANGLE_MAX)
+            genes.extend([turn_distance, turn_angle])
+            
+            # 控制点2 (终点附近) - 用于离开途径点的前进路径
+            x2 = random.uniform(END_POINT[0] - 3, END_POINT[0])
+            y2 = random.uniform(END_POINT[1] - 3, END_POINT[1])
+            genes.extend([x2, y2])
         return genes
     
     def generate_paths(self):
-        """生成完整路径链（含倒车段）"""
+        """
+        生成完整路径链（含倒车段）
+        新基因结构：每个途径点有6个基因 [ctrl1_x, ctrl1_y, turn_distance, turn_angle, ctrl2_x, ctrl2_y]
+        """
         segments = []
         
         # 入口点 → 每个途径点的路径
         for i, waypoint in enumerate(WAYPOINTS):
-            ctrl1 = self.genes[i*2]
-            # 从起点出发，目标是途径点
-            segment = self.generate_waypoint_path(START_POINT, START_HEADING, waypoint, ctrl1, is_to_waypoint=True)
+            gene_offset = i * 6  # 每个途径点6个基因参数
+            ctrl1 = (self.genes[gene_offset], self.genes[gene_offset + 1])
+            turn_distance = self.genes[gene_offset + 2]
+            turn_angle = self.genes[gene_offset + 3]
+            
+            # 创建转向参数字典
+            turn_params = {
+                'distance': turn_distance,
+                'angle': turn_angle
+            }
+            
+            # 从起点出发，目标是途径点，包含转向参数
+            segment = self.generate_waypoint_path(START_POINT, START_HEADING, waypoint, ctrl1, turn_params, is_to_waypoint=True)
             segments.append(segment)
         
         # 每个途径点 → 出口点的路径
         for i, waypoint in enumerate(WAYPOINTS):
-            ctrl2 = self.genes[i*2+1]
+            gene_offset = i * 6
+            ctrl2 = (self.genes[gene_offset + 4], self.genes[gene_offset + 5])
+            
             # 从途径点出发，使用途径点的朝向，目标是END_POINT + END_HEADING
             end_with_heading = (END_POINT[0], END_POINT[1], END_HEADING)
-            segment = self.generate_waypoint_path(waypoint, waypoint[2], end_with_heading, ctrl2, is_to_waypoint=False)
+            segment = self.generate_waypoint_path(waypoint, waypoint[2], end_with_heading, ctrl2, None, is_to_waypoint=False)
             segments.append(segment)
         
         return segments
     
-    def generate_waypoint_path(self, start_pos, start_heading, end_waypoint, control_point, is_to_waypoint):
+    def generate_waypoint_path(self, start_pos, start_heading, end_waypoint, control_point, turn_params, is_to_waypoint):
         """
         生成真实的车辆路径（含实际倒车操作）
         start_pos: 起始位置 (x, y) 或 (x, y, heading)
         start_heading: 起始朝向
         end_waypoint: 目标途径点 (x, y, heading_inward)
+        control_point: 路径控制点 (x, y)
+        turn_params: 转向参数字典 {'distance': float, 'angle': float} 或 None
         is_to_waypoint: True表示进入途径点，需要倒车
         """
         if isinstance(start_pos, tuple) and len(start_pos) == 3:
@@ -101,28 +127,35 @@ class RoadNetwork:
         end_heading = end_waypoint[2]
         
         if is_to_waypoint:
-            # 进入途径点：需要倒车操作
-            return self.generate_backing_maneuver(start_pos, start_heading, end_pos, end_heading, control_point)
+            # 进入途径点：需要倒车操作，使用进化的转向参数
+            return self.generate_backing_maneuver(start_pos, start_heading, end_pos, end_heading, control_point, turn_params)
         else:
             # 离开途径点：正常前进
             return self.generate_forward_path(start_pos, start_heading, end_pos, END_HEADING, control_point)
     
-    def generate_backing_maneuver(self, start_pos, start_heading, end_pos, end_heading, control_point):
+    def generate_backing_maneuver(self, start_pos, start_heading, end_pos, end_heading, control_point, turn_params):
         """
         生成倒车操作路径：前进到位置 -> 停止转向 -> 倒车到位
+        turn_params: 进化的转向参数 {'distance': float, 'angle': float}
         """
         all_points = []
         all_reverse_flags = []
         
-        # Step 1: 前进到倒车起始点
-        # 计算倒车起始点：距离途径点一定距离，方向与目标倒车方向相反
-        backing_distance = min(MAX_REVERSE_LENGTH, 2.0)
-        reverse_start_x = end_pos[0] - backing_distance * np.cos(end_heading)
-        reverse_start_y = end_pos[1] - backing_distance * np.sin(end_heading)
+        # Step 1: 前进到倒车起始点 - 使用进化的参数
+        # 计算倒车起始点：使用进化的距离和角度偏移
+        backing_distance = turn_params['distance']
+        angle_offset = turn_params['angle']
+        
+        # 基础倒车方向 + 角度偏移
+        backing_angle = end_heading + angle_offset
+        reverse_start_x = end_pos[0] - backing_distance * np.cos(backing_angle)
+        reverse_start_y = end_pos[1] - backing_distance * np.sin(backing_angle)
         reverse_start_pos = (reverse_start_x, reverse_start_y)
         
         # 前进段：从起点到倒车起始点
-        forward_points = self.create_smooth_path(start_pos, start_heading, reverse_start_pos, end_heading + np.pi, control_point, 15)
+        # 倒车时的车头朝向：要与倒车移动方向相反
+        reverse_heading_target = backing_angle + np.pi
+        forward_points = self.create_smooth_path(start_pos, start_heading, reverse_start_pos, reverse_heading_target, control_point, 15)
         forward_headings = self.calculate_path_headings(forward_points)
         
         for i, (point, heading) in enumerate(zip(forward_points, forward_headings)):
@@ -130,9 +163,9 @@ class RoadNetwork:
             all_reverse_flags.append(False)
         
         # Step 2: 转向点（车辆停止并转向）
-        # 添加转向点，车头方向从前进方向转为倒车方向
+        # 添加转向点，车头方向转为倒车朝向
         turn_point = reverse_start_pos
-        turn_heading = end_heading + np.pi  # 倒车时车头朝向与移动方向相反
+        turn_heading = reverse_heading_target  # 倒车时车头朝向
         all_points.append((turn_point[0], turn_point[1], turn_heading))
         all_reverse_flags.append(False)  # 转向时不移动
         

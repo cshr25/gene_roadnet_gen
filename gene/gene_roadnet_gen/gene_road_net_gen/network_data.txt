@@ -4,56 +4,56 @@ Road Network Analysis Report
 Path Segment Details:
 --------------------
 Segment 1:
-  Length: 6.22 meters
+  Length: 4.18 meters
   Reverse segments: 1
-  Reverse length: 1.71 meters
+  Reverse length: 0.43 meters
   Points: 23
 
 Segment 2:
-  Length: 14.68 meters
+  Length: 11.91 meters
   Reverse segments: 1
-  Reverse length: 1.71 meters
+  Reverse length: 0.43 meters
   Points: 23
 
 Segment 3:
-  Length: 16.22 meters
+  Length: 13.25 meters
   Reverse segments: 1
-  Reverse length: 1.71 meters
+  Reverse length: 0.43 meters
   Points: 23
 
 Segment 4:
-  Length: 10.62 meters
+  Length: 8.43 meters
   Reverse segments: 1
-  Reverse length: 1.71 meters
+  Reverse length: 0.43 meters
   Points: 23
 
 Segment 5:
-  Length: 12.39 meters
+  Length: 12.48 meters
   Reverse segments: 0
   Reverse length: 0.00 meters
   Points: 20
 
 Segment 6:
-  Length: 8.10 meters
+  Length: 8.11 meters
   Reverse segments: 0
   Reverse length: 0.00 meters
   Points: 20
 
 Segment 7:
-  Length: 3.29 meters
+  Length: 3.82 meters
   Reverse segments: 0
   Reverse length: 0.00 meters
   Points: 20
 
 Segment 8:
-  Length: 10.72 meters
+  Length: 10.70 meters
   Reverse segments: 0
   Reverse length: 0.00 meters
   Points: 20
 
 Summary Statistics:
 --------------------
-Total path length: 82.23 meters
+Total path length: 72.87 meters
 Total reverse segments: 4
-Total reverse length: 6.86 meters
-Reverse ratio: 8.3%
+Total reverse length: 1.71 meters
+Reverse ratio: 2.4%

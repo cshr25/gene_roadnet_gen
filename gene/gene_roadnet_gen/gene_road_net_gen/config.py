@@ -20,10 +20,16 @@ WAYPOINTS = [
 MIN_TURNING_RADIUS = 1.0      # 前进最小转弯半径
 REVERSE_TURNING_FACTOR = 1.5  # 倒车时转弯半径增大因子
 MAX_REVERSE_LENGTH = 3.0      # 最大连续倒车距离
+MIN_REVERSE_LENGTH = 0.5      # 最小连续倒车距离
+
+# 转向点进化参数
+TURN_DISTANCE_MIN = 0.5       # 转向点距离途径点的最小距离
+TURN_DISTANCE_MAX = 2.5       # 转向点距离途径点的最大距离
+TURN_ANGLE_MAX = np.pi/6      # 转向点角度偏移的最大值 (±30度)
 
 # 进化算法参数
-POPULATION_SIZE = 10
-MAX_GENERATIONS = 5
+POPULATION_SIZE = 20
+MAX_GENERATIONS = 15
 CX_PROBABILITY = 0.7
 MUT_PROBABILITY = 0.2
 TOURNAMENT_SIZE = 3
@@ -37,6 +43,7 @@ WEIGHTS = {
     'overlap': 5.0,         # 路径重叠
     'reverse_count': 2.0,   # 倒车段计数
     'reverse_length': 0.5,  # 倒车段长度
+    'turn_validity': 5.0,   # 转向点有效性
 }
 
 # 安全距离
