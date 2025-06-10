@@ -4,7 +4,7 @@ from shapely.geometry import Polygon, LineString
 import numpy as np
 
 def plot_roadnet(network, boundary, start_point, end_point, waypoints):
-    """可视化路网（含倒车指示）"""
+    """可视化路网（含倒车指示和方向变化）"""
     plt.figure(figsize=(12, 12))
     ax = plt.gca()
     
@@ -13,18 +13,40 @@ def plot_roadnet(network, boundary, start_point, end_point, waypoints):
     x, y = poly.exterior.xy
     plt.plot(x, y, 'k-', linewidth=2)
     
-    # 绘制入口点和出口点
+    # 绘制入口点和出口点与朝向
     plt.plot(start_point[0], start_point[1], 'go', markersize=12, label='Start')
     plt.plot(end_point[0], end_point[1], 'ro', markersize=12, label='End')
     
-    # 绘制途径点
+    # 绘制起点朝向箭头
+    from config import START_HEADING, END_HEADING
+    start_arrow_length = 0.8
+    start_dx = start_arrow_length * np.cos(START_HEADING)
+    start_dy = start_arrow_length * np.sin(START_HEADING)
+    plt.arrow(start_point[0], start_point[1], start_dx, start_dy, 
+              head_width=0.2, head_length=0.2, fc='green', ec='green')
+    
+    # 绘制终点朝向箭头
+    end_dx = start_arrow_length * np.cos(END_HEADING)
+    end_dy = start_arrow_length * np.sin(END_HEADING)
+    plt.arrow(end_point[0], end_point[1], end_dx, end_dy,
+              head_width=0.2, head_length=0.2, fc='red', ec='red')
+    
+    # 绘制途径点和朝向
     for i, pt in enumerate(waypoints):
         plt.plot(pt[0], pt[1], 'bo', markersize=10)
-        plt.text(pt[0], pt[1], f'W{i}', fontsize=12, ha='center', va='bottom')
+        plt.text(pt[0] + 0.3, pt[1] + 0.3, f'W{i}', fontsize=12, ha='center', va='bottom')
+        
+        # 绘制途径点朝向（向内）
+        heading = pt[2]  # waypoint的第三个元素是朝向
+        arrow_length = 0.6
+        dx = arrow_length * np.cos(heading)
+        dy = arrow_length * np.sin(heading)
+        plt.arrow(pt[0], pt[1], dx, dy, 
+                  head_width=0.15, head_length=0.15, fc='blue', ec='blue', alpha=0.7)
     
     # 绘制路径
     colors = plt.cm.tab10.colors
-    arrow_style = patches.ArrowStyle("->", head_length=6, head_width=3)
+    arrow_style = patches.ArrowStyle("->", head_length=4, head_width=2)
     
     for i, segment in enumerate(network.path_segments):
         color = colors[i % len(colors)]
@@ -32,50 +54,68 @@ def plot_roadnet(network, boundary, start_point, end_point, waypoints):
         # 绘制路径线
         if isinstance(segment.line, LineString):
             x, y = segment.line.xy
-            plt.plot(x, y, color=color, linewidth=1.5, alpha=0.7)
             
-            # 在倒车段添加特殊标记
+            # 分别绘制前进段和倒车段
             points = segment.points
             reverse_flags = segment.reverse_flags
             
-            for j in range(len(points)-1):
-                if reverse_flags[j]:
-                    mid_x = (points[j][0] + points[j+1][0]) / 2
-                    mid_y = (points[j][1] + points[j+1][1]) / 2
-                    plt.plot(mid_x, mid_y, 'rx', markersize=8)
+            # 绘制前进段（实线）
+            forward_x, forward_y = [], []
+            reverse_x, reverse_y = [], []
+            
+            for j in range(len(points)):
+                if not reverse_flags[j]:
+                    forward_x.append(points[j][0])
+                    forward_y.append(points[j][1])
+                else:
+                    reverse_x.append(points[j][0])
+                    reverse_y.append(points[j][1])
+            
+            # 绘制前进段
+            if len(forward_x) > 1:
+                plt.plot(forward_x, forward_y, color=color, linewidth=2.5, alpha=0.8, label=f'Path {i+1} Forward')
+            
+            # 绘制倒车段（虚线）
+            if len(reverse_x) > 1:
+                plt.plot(reverse_x, reverse_y, color=color, linewidth=2.5, alpha=0.8, 
+                        linestyle='--', label=f'Path {i+1} Reverse')
+            
+            # 标记转向点（前进到倒车的转换点）
+            for j in range(1, len(points)):
+                if not reverse_flags[j-1] and reverse_flags[j]:
+                    # 这是从前进到倒车的转换点
+                    plt.plot(points[j-1][0], points[j-1][1], 'ks', markersize=8, alpha=0.8)
+                    plt.text(points[j-1][0], points[j-1][1] + 0.2, 'TURN', 
+                            fontsize=8, ha='center', va='bottom', weight='bold')
+            
+            # 添加车辆朝向箭头（每隔几个点）
+            for j in range(0, len(points), max(1, len(points)//5)):  # 显示5个朝向箭头
+                if j < len(points):
+                    px, py, heading = points[j]
+                    arrow_length = 0.3
+                    dx = arrow_length * np.cos(heading)
+                    dy = arrow_length * np.sin(heading)
                     
-            # 添加倒车方向指示箭头
-            if len(points) > 1 and any(reverse_flags):
-                # 查找第一个倒车段
-                start_idx = None
-                end_idx = None
-                for j in range(len(points)-1):
+                    # 前进段用实心箭头，倒车段用空心箭头
                     if reverse_flags[j]:
-                        start_idx = j
-                        while j < len(points)-1 and reverse_flags[j]:
-                            j += 1  # Fixed: proper increment
-                        end_idx = j
-                        break
-                
-                if start_idx is not None and end_idx is not None and end_idx - start_idx > 1:
-                    arrow_idx = (start_idx + end_idx) // 2
-                    if arrow_idx < len(points) - 1:
-                        dx = points[arrow_idx+1][0] - points[arrow_idx][0]
-                        dy = points[arrow_idx+1][1] - points[arrow_idx][1]
-                        arrow = patches.FancyArrowPatch(
-                            (points[arrow_idx][0], points[arrow_idx][1]),
-                            (points[arrow_idx][0] + dx*0.5, points[arrow_idx][1] + dy*0.5),  # Fixed: added multiplication operator
-                            arrowstyle=arrow_style,
-                            color='red',
-                            mutation_scale=15
-                        )
-                        ax.add_patch(arrow)
+                        # 倒车段：空心红色箭头
+                        plt.arrow(px, py, dx, dy, head_width=0.1, head_length=0.1, 
+                                 fc='none', ec='red', linewidth=1.5)
+                    else:
+                        # 前进段：实心蓝色箭头
+                        plt.arrow(px, py, dx, dy, head_width=0.1, head_length=0.1, 
+                                 fc='blue', ec='blue', alpha=0.6)
     
-    # 添加图例
-    plt.plot([], [], 'rx', markersize=8, label='Reverse Segment')
-    plt.legend(loc='best')
+    # 添加图例元素
+    plt.plot([], [], 'b-', linewidth=2.5, alpha=0.8, label='Forward Path')
+    plt.plot([], [], 'b--', linewidth=2.5, alpha=0.8, label='Reverse Path')
+    plt.plot([], [], 'ks', markersize=8, alpha=0.8, label='Turn Point')
+    plt.arrow(0, 0, 0, 0, head_width=0.1, head_length=0.1, fc='blue', ec='blue', alpha=0.6, label='Vehicle Heading (Forward)')
+    plt.arrow(0, 0, 0, 0, head_width=0.1, head_length=0.1, fc='none', ec='red', linewidth=1.5, label='Vehicle Heading (Reverse)')
     
-    plt.title("Road Network with Reverse Maneuvers")
+    plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+    
+    plt.title("Road Network with Realistic Backing Maneuvers\n(Showing Sharp Turns and Direction Changes)")
     plt.axis('equal')
     plt.grid(True)
     plt.savefig('road_network_reverse.png', dpi=300)

@@ -74,8 +74,9 @@ class GeneticAlgorithm:
         ctrl_idx = idx * 2
         ctrl_point = list(genes[ctrl_idx])
         
-        # 将控制点向途径点方向移动
-        direction = np.array(waypoint) - np.array(ctrl_point)
+        # 将控制点向途径点方向移动（只使用位置，不使用朝向）
+        waypoint_pos = (waypoint[0], waypoint[1])  # 提取位置坐标
+        direction = np.array(waypoint_pos) - np.array(ctrl_point)
         direction = direction / np.linalg.norm(direction) * 0.5
         new_ctrl = (
             ctrl_point[0] + direction[0],

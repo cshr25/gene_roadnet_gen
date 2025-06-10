@@ -72,52 +72,159 @@ class RoadNetwork:
         # 入口点 → 每个途径点的路径
         for i, waypoint in enumerate(WAYPOINTS):
             ctrl1 = self.genes[i*2]
-            segment = self.generate_waypoint_path(START_POINT, waypoint, ctrl1, is_to_waypoint=True)
+            # 从起点出发，目标是途径点
+            segment = self.generate_waypoint_path(START_POINT, START_HEADING, waypoint, ctrl1, is_to_waypoint=True)
             segments.append(segment)
         
         # 每个途径点 → 出口点的路径
         for i, waypoint in enumerate(WAYPOINTS):
             ctrl2 = self.genes[i*2+1]
-            segment = self.generate_waypoint_path(waypoint, END_POINT, ctrl2, is_to_waypoint=False)
+            # 从途径点出发，使用途径点的朝向，目标是END_POINT + END_HEADING
+            end_with_heading = (END_POINT[0], END_POINT[1], END_HEADING)
+            segment = self.generate_waypoint_path(waypoint, waypoint[2], end_with_heading, ctrl2, is_to_waypoint=False)
             segments.append(segment)
         
         return segments
     
-    def generate_waypoint_path(self, start, end, control_point, is_to_waypoint):
+    def generate_waypoint_path(self, start_pos, start_heading, end_waypoint, control_point, is_to_waypoint):
         """
-        生成单条路径段（含倒车操作）
+        生成真实的车辆路径（含实际倒车操作）
+        start_pos: 起始位置 (x, y) 或 (x, y, heading)
+        start_heading: 起始朝向
+        end_waypoint: 目标途径点 (x, y, heading_inward)
         is_to_waypoint: True表示进入途径点，需要倒车
         """
-        # 创建三次贝塞尔曲线
-        bezier_points = self.cubic_bezier(start, control_point, end, 20)
-        headings = self.calculate_headings(bezier_points)
+        if isinstance(start_pos, tuple) and len(start_pos) == 3:
+            start_pos = (start_pos[0], start_pos[1])
         
-        # 识别倒车段
-        reverse_flags = [False] * len(bezier_points)
+        end_pos = (end_waypoint[0], end_waypoint[1])
+        end_heading = end_waypoint[2]
         
         if is_to_waypoint:
-            # 计算倒车起始点（接近途径点时）
-            reverse_start_idx = int(len(bezier_points) * 0.7)  # 后30%路径
-            
-            # 确保倒车方向合理
-            target_heading = self.calculate_desired_heading(bezier_points[-1], end)
-            
-            for i in range(reverse_start_idx, len(bezier_points)):
-                reverse_flags[i] = True
-                
-                # 调整倒车段方向以匹配期望方向
-                angle_diff = self.angle_difference(headings[i], target_heading)
-                if abs(angle_diff) > REVERSE_ANGLE_TOLERANCE:
-                    # 倒车时需要更小的转弯半径
-                    headings[i] = target_heading
+            # 进入途径点：需要倒车操作
+            return self.generate_backing_maneuver(start_pos, start_heading, end_pos, end_heading, control_point)
+        else:
+            # 离开途径点：正常前进
+            return self.generate_forward_path(start_pos, start_heading, end_pos, END_HEADING, control_point)
+    
+    def generate_backing_maneuver(self, start_pos, start_heading, end_pos, end_heading, control_point):
+        """
+        生成倒车操作路径：前进到位置 -> 停止转向 -> 倒车到位
+        """
+        all_points = []
+        all_reverse_flags = []
         
-        return ReversePath(
-            points=[(p[0], p[1], h) for p, h in zip(bezier_points, headings)],
-            reverse_flags=reverse_flags
-        )
+        # Step 1: 前进到倒车起始点
+        # 计算倒车起始点：距离途径点一定距离，方向与目标倒车方向相反
+        backing_distance = min(MAX_REVERSE_LENGTH, 2.0)
+        reverse_start_x = end_pos[0] - backing_distance * np.cos(end_heading)
+        reverse_start_y = end_pos[1] - backing_distance * np.sin(end_heading)
+        reverse_start_pos = (reverse_start_x, reverse_start_y)
+        
+        # 前进段：从起点到倒车起始点
+        forward_points = self.create_smooth_path(start_pos, start_heading, reverse_start_pos, end_heading + np.pi, control_point, 15)
+        forward_headings = self.calculate_path_headings(forward_points)
+        
+        for i, (point, heading) in enumerate(zip(forward_points, forward_headings)):
+            all_points.append((point[0], point[1], heading))
+            all_reverse_flags.append(False)
+        
+        # Step 2: 转向点（车辆停止并转向）
+        # 添加转向点，车头方向从前进方向转为倒车方向
+        turn_point = reverse_start_pos
+        turn_heading = end_heading + np.pi  # 倒车时车头朝向与移动方向相反
+        all_points.append((turn_point[0], turn_point[1], turn_heading))
+        all_reverse_flags.append(False)  # 转向时不移动
+        
+        # Step 3: 倒车段
+        # 从转向点倒车到途径点
+        backing_points = self.create_straight_backing_path(reverse_start_pos, end_pos, 8)
+        
+        for point in backing_points[1:]:  # 跳过第一个点（已添加）
+            all_points.append((point[0], point[1], turn_heading))  # 倒车时车头方向不变
+            all_reverse_flags.append(True)
+        
+        return ReversePath(all_points, all_reverse_flags)
+    
+    def generate_forward_path(self, start_pos, start_heading, end_pos, end_heading, control_point):
+        """生成正常前进路径"""
+        forward_points = self.create_smooth_path(start_pos, start_heading, end_pos, end_heading, control_point, 20)
+        forward_headings = self.calculate_path_headings(forward_points)
+        
+        points_with_headings = [(p[0], p[1], h) for p, h in zip(forward_points, forward_headings)]
+        reverse_flags = [False] * len(points_with_headings)
+        
+        return ReversePath(points_with_headings, reverse_flags)
+    
+    def create_smooth_path(self, start_pos, start_heading, end_pos, end_heading, control_point, num_points):
+        """创建光滑路径（基于方向约束的贝塞尔曲线）"""
+        # 根据起始和结束方向创建控制点
+        control_distance = np.linalg.norm(np.array(end_pos) - np.array(start_pos)) * 0.3
+        
+        # 起始控制点：沿起始方向延伸
+        ctrl1_x = start_pos[0] + control_distance * np.cos(start_heading)
+        ctrl1_y = start_pos[1] + control_distance * np.sin(start_heading)
+        
+        # 结束控制点：沿结束方向反向延伸
+        ctrl2_x = end_pos[0] - control_distance * np.cos(end_heading)
+        ctrl2_y = end_pos[1] - control_distance * np.sin(end_heading)
+        
+        # 使用遗传算法控制点进行微调（确保control_point是2D点）
+        if len(control_point) >= 2:
+            ctrl1_x += (control_point[0] - start_pos[0]) * 0.3
+            ctrl1_y += (control_point[1] - start_pos[1]) * 0.3
+        
+        # 生成三次贝塞尔曲线
+        return self.cubic_bezier_with_controls(start_pos, (ctrl1_x, ctrl1_y), (ctrl2_x, ctrl2_y), end_pos, num_points)
+    
+    def create_straight_backing_path(self, start_pos, end_pos, num_points):
+        """创建直线倒车路径"""
+        points = []
+        for i in range(num_points):
+            t = i / (num_points - 1)
+            x = start_pos[0] + t * (end_pos[0] - start_pos[0])
+            y = start_pos[1] + t * (end_pos[1] - start_pos[1])
+            points.append((x, y))
+        return points
+    
+    def calculate_path_headings(self, points):
+        """计算路径各点的车头朝向"""
+        headings = []
+        
+        for i in range(len(points)):
+            if i == 0:
+                # 第一个点：使用与下一个点的方向
+                if len(points) > 1:
+                    dx = points[1][0] - points[0][0]
+                    dy = points[1][1] - points[0][1]
+                    headings.append(np.arctan2(dy, dx))
+                else:
+                    headings.append(0.0)
+            elif i == len(points) - 1:
+                # 最后一个点：使用与前一个点的方向
+                dx = points[-1][0] - points[-2][0]
+                dy = points[-1][1] - points[-2][1]
+                headings.append(np.arctan2(dy, dx))
+            else:
+                # 中间点：使用前后点的平均方向
+                dx = points[i+1][0] - points[i-1][0]
+                dy = points[i+1][1] - points[i-1][1]
+                headings.append(np.arctan2(dy, dx))
+        
+        return headings
+    
+    def cubic_bezier_with_controls(self, p0, p1, p2, p3, num_points):
+        """生成四点控制的三次贝塞尔曲线"""
+        t = np.linspace(0, 1, num_points)
+        points = []
+        for i in t:
+            x = (1-i)**3 * p0[0] + 3*(1-i)**2*i * p1[0] + 3*(1-i)*i**2 * p2[0] + i**3 * p3[0]
+            y = (1-i)**3 * p0[1] + 3*(1-i)**2*i * p1[1] + 3*(1-i)*i**2 * p2[1] + i**3 * p3[1]
+            points.append((x, y))
+        return points
     
     def cubic_bezier(self, p0, p1, p2, num_points):
-        """生成三次贝塞尔曲线点"""
+        """生成三次贝塞尔曲线点（保持向后兼容）"""
         t = np.linspace(0, 1, num_points)
         points = []
         for i in t:
